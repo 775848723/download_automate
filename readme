@@ -1,0 +1,155 @@
+非常棒的想法💡
+你要的是一个半自动化脚本：
+用户自己登录 Salesforce 的备份页面（通过 Chrome / Edge），然后脚本识别页面上的备份下载链接，逐个下载，显示进度，自动建日期文件夹保存，并记录日志（包括失败重试）。
+
+⸻
+
+✅ 脚本设计要点
+	•	用 Python + Selenium + Requests + tqdm 实现。
+	•	用户手动登录（脚本只在登录后开始操作，不保存凭据）。
+	•	自动识别所有备份下载链接（从当前页面 DOM 里抓取）。
+	•	每个文件下载：
+	•	显示实时进度条。
+	•	下载失败自动重试（最多 3 次）。
+	•	每个下载之间等待 5 秒。
+	•	下载文件保存在当前目录下以日期命名的文件夹，例如 20251004/。
+	•	生成一个 download_log.txt，记录成功与失败。
+
+⸻
+
+✅ 使用前提
+	1.	已安装 Chrome 或 Edge。
+	2.	安装依赖：
+
+pip install selenium requests tqdm
+
+
+	3.	安装对应浏览器的驱动程序：
+
+# Chrome
+brew install chromedriver
+
+# Edge (如果使用 Edge)
+brew install --cask microsoft-edge
+brew install --cask microsoft-edge-driver
+
+
+
+⸻
+
+✅ 完整脚本示例：salesforce_backup_downloader.py
+
+import os
+import time
+import datetime
+import requests
+from tqdm import tqdm
+from selenium import webdriver
+from selenium.webdriver.common.by import By
+from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+
+# === 配置部分 ===
+WAIT_AFTER_EACH_DOWNLOAD = 5      # 每个文件之间的等待秒数
+MAX_RETRY = 3                     # 下载失败重试次数
+DOWNLOAD_DIR = datetime.datetime.now().strftime("%Y%m%d")  # 文件夹名
+LOG_FILE = f"{DOWNLOAD_DIR}/download_log.txt"
+
+# === 初始化 ===
+os.makedirs(DOWNLOAD_DIR, exist_ok=True)
+
+chrome_options = Options()
+chrome_options.add_argument("--start-maximized")
+
+print("🚀 启动浏览器，请手动登录 Salesforce 备份页面。")
+driver = webdriver.Chrome(options=chrome_options)
+
+input("✅ 登录完成并进入备份下载页面后，按回车继续...")
+
+# === 获取所有下载链接 ===
+links = driver.find_elements(By.XPATH, "//a[contains(@href, 'download')]")
+download_urls = [link.get_attribute("href") for link in links if link.get_attribute("href")]
+
+print(f"🔗 共检测到 {len(download_urls)} 个备份文件。")
+
+# === 获取当前登录 session cookies ===
+cookies = {c['name']: c['value'] for c in driver.get_cookies()}
+
+driver.quit()
+print("🧩 登录信息已保存，开始下载...")
+
+# === 下载函数 ===
+def download_file(url, folder, session, log_lines):
+    local_filename = os.path.join(folder, url.split('/')[-1])
+    for attempt in range(1, MAX_RETRY + 1):
+        try:
+            with session.get(url, stream=True, timeout=120) as r:
+                r.raise_for_status()
+                total_size = int(r.headers.get('content-length', 0))
+                block_size = 1024
+                progress = tqdm(total=total_size, unit='iB', unit_scale=True, desc=local_filename)
+                with open(local_filename, 'wb') as f:
+                    for data in r.iter_content(block_size):
+                        progress.update(len(data))
+                        f.write(data)
+                progress.close()
+            log_lines.append(f"[SUCCESS] {url}\n")
+            print(f"✅ 下载完成: {local_filename}")
+            return True
+        except Exception as e:
+            print(f"⚠️ 第 {attempt} 次下载失败：{e}")
+            if attempt == MAX_RETRY:
+                log_lines.append(f"[FAILED] {url} ({e})\n")
+                return False
+            else:
+                time.sleep(3)  # 重试前等 3 秒
+
+# === 开始下载 ===
+session = requests.Session()
+for name, value in cookies.items():
+    session.cookies.set(name, value)
+
+log_lines = []
+for i, url in enumerate(download_urls, 1):
+    print(f"\n📦 [{i}/{len(download_urls)}] 开始下载：{url}")
+    success = download_file(url, DOWNLOAD_DIR, session, log_lines)
+    if success:
+        time.sleep(WAIT_AFTER_EACH_DOWNLOAD)
+
+# === 写入日志 ===
+with open(LOG_FILE, "w", encoding="utf-8") as f:
+    f.writelines(log_lines)
+
+print(f"\n📄 下载完成！日志已保存至：{LOG_FILE}")
+
+
+⸻
+
+✅ 使用说明
+	1.	打开终端，进入脚本所在目录：
+
+cd /Users/test/Downloads
+
+
+	2.	运行脚本：
+
+python3 salesforce_backup_downloader.py
+
+
+	3.	脚本会自动打开浏览器，让你登录 Salesforce 备份页面。
+	4.	登录成功后按 回车，脚本开始自动抓取下载链接并批量下载。
+
+⸻
+
+✅ 下载记录示例（download_log.txt）
+
+[SUCCESS] https://example.salesforce.com/backup/file1.zip
+[SUCCESS] https://example.salesforce.com/backup/file2.zip
+[FAILED]  https://example.salesforce.com/backup/file3.zip (ReadTimeout)
+
+
+⸻
+
+是否希望我再帮你优化成一个带图形界面（GUI）版本，比如点按钮「开始下载」的那种？适合非命令行用户。
